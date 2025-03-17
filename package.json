@@ -1,0 +1,24 @@
+{
+    "name": "multi-bot",
+    "version": "1.0.0",
+    "description": "Discord & WhatsApp Bot",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js",
+        "start:discord": "node discordBot.js",
+        "start:whatsapp": "node waBot.js"
+    },
+    "dependencies": {
+        "@whiskeysockets/baileys": "^6.7.16",
+        "discord.js-selfbot-v13": "^2.10.1",
+        "moment": "^2.29.4",
+        "pino": "^9.6.0",
+        "qrcode-terminal": "^0.12.0"
+    },
+    "keywords": [
+    "statusdiscord",
+    "discordstatus"
+    ],
+    "author": "Panggigo2712",
+    "license": "ISC"
+}
