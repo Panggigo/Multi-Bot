@@ -12,22 +12,28 @@ const pino = require('pino');
 const qrcode = require("qrcode-terminal");
 
 //=========== Function ==============\\
-const { TextReply, ImgReply, isUrl, sleep, getGroupAdmins } = require('./Lib/function');
+const { 
+    kickMember, addMember, promoteMember, demoteMember, tagAll, hideTag, setDesc, setSubject, deleteMessage,
+    blockUser, unblockUser, setProfilePicture, setBio, setName, getProfilePicture,
+    TextReply, sendImageMessage, 
+    getMediaBuffer, getGroupAdmins, sleep, isUrl, makeSticker, stickerToImage, setBotPrefix, setBotMode, setBotName
+} = require("./Lib");
+
+//const { TextReply, ImgReply, isUrl, sleep, getGroupAdmins } = require('./Lib/function');
 
 //=========== Database ==============\\
-const setting = JSON.parse(fs.readFileSync('./Database/settings.json'));
-
-let prefix = setting.prefix;
-let publicMode = setting.public; // Ubah nama variabel agar lebih jelas
-let ownerNumber = setting.noOwner; // Nomor pemilik bot
-let bot = setting.bot;
+let settings = JSON.parse(fs.readFileSync("./Database/settings.json", "utf-8"));
+let prefix = settings.prefix || "!";
+let publicMode = settings.public || true;
+let ownerNumber = settings.noOwner;
+let botName = settings.bot;
 
 //=================== Start Bot ===================\\
 async function StartBot() {
     const { state, saveCreds } = await useMultiFileAuthState("./session");
 
     const client = makeWASocket({
-        logger: pino({ level: "silent" }),
+        // logger: pino({ level: "silent" }),
         printQRInTerminal: true,
         auth: state
     });
@@ -43,8 +49,8 @@ async function StartBot() {
     client.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
-            console.log("📌 Scan QR Code ini untuk login:");
-            qrcode.generate(qr, { small: true });
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+            console.log(`📌 Scan QR Code di browser: ${qrUrl}`);
         }
         if (connection === 'close') {
             if (lastDisconnect?.error?.output?.statusCode === DisconnectReason.loggedOut) {
@@ -73,11 +79,13 @@ async function StartBot() {
                     // 🗑️ Cetak hanya satu log jika ada file yang berhasil dihapus
                     setTimeout(() => {
                         if (deletedFiles.length > 0) {
-                            console.log(`🗑️ Menghapus ${deletedFiles.length} file session: ${deletedFiles.join(", ")}`);
+                            console.log(`🗑️ Menghapus ${deletedFiles.length} file session`);
+                            //console.log(`🗑️ Menghapus ${deletedFiles.length} file session: ${deletedFiles.join(", ")}`);
                         }
                     }, 1000); // 🔄 Beri sedikit delay agar fs.unlink() selesai
                 });
             }, 5 * 60 * 1000); // ✅ Setiap 5 menit (5 * 60 * 1000 ms)
+            console.log(`✅ Bot aktif dengan prefix: \x1b[32m${prefix}\x1b[0m Mode bot: \x1b[32m${publicMode ? "Public" : "Private"}\x1b[0m`);
             console.log(`\x1b[32m✅ Bot WhatsApp Terhubung!\x1b[0m`);
         }
     });
@@ -86,13 +94,12 @@ async function StartBot() {
     client.ev.on('messages.upsert', async ({ messages }) => {
         const info = messages[0];
         if (!info.message) return;
-        if (!info.key.fromMe) return;
 
         const from = info.key.remoteJid;
         const type = getContentType(info.message);
         const fromMe = info.key.fromMe;
         const isGroup = from.endsWith("@g.us");
-        const pushname = info.pushName ? info.pushName: `${bot}`
+        const pushname = info.pushName ? info.pushName: `${botName}`
         const isCreator = (info.key.fromMe || from === ownerNumber); // Perbaiki cek kepemilikan bot
 
         // ✅ Ambil isi pesan
@@ -111,27 +118,54 @@ async function StartBot() {
 
         //Function Message
         const reply = (text) => { TextReply(client, from, text, info); }
-        const ImgMessage = (text, image) => { ImgReply(client, from, text, image, info); }
+        const ImgMessage = (text, image) => { sendImageMessage(client, from, text, image, info); }
+        //Public Mode
+        if (!publicMode && !isCreator) { 
+            return; // Jika mode privat dan bukan owner, bot tidak akan merespons
+        }
         //Log Console
         if (isCmd) { console.log(`📩 Command: ${command} | Dari: ${pushname}`); }
 
-        if (!publicMode) { // ✅ Gunakan `publicMode` yang benar
-            if (!isCreator) return; // Jika bukan owner, bot tidak akan merespon
-        }
         try {
             switch(command) {
+// ========================= 📌 FITUR PRIBADI ========================= \\
+                case 'pmenu':
+                case 'phelp':
+                    try {
+                        const pMenuText = `📜 *Private Menu Bot - ${botName}*\n
+🔧 *Pengaturan Bot:*
+🔹 *${prefix}setprefix [prefix_baru]* - Mengubah prefix bot
+🔹 *${prefix}setmode [public/private]* - Mengubah mode bot
+🔹 *${prefix}setbotname [nama_baru]* - Mengubah nama bot
+
+📝 *Profil Bot:*
+🔹 *${prefix}setname [nama_baru]* - Mengubah nama Profil bot
+🔹 *${prefix}setpp* - Mengubah foto profil bot (balas dengan gambar)
+🔹 *${prefix}setbio [teks]* - Mengubah bio bot
+🔹 *${prefix}getpp* - Melihat foto profil pengguna lain (balas pesan)
+
+🔐 *Perintah Blokir:*
+🔹 *${prefix}block* - Memblokir nomor WhatsApp (balas pesan)
+🔹 *${prefix}unblock* - Membuka blokir nomor WhatsApp (balas pesan)
+
+🛠️ *Perintah Lainnya:*
+🔹 *${prefix}ping* - Mengecek respons bot
+🔹 *${prefix}source* - Menampilkan source code bot`;
+                        const pMenuImage = "./Media/Foto/menu.jpeg";
+                    
+                        await ImgMessage(pMenuText, pMenuImage);
+                    } catch (error) {
+                        console.error("❌ Error dalam menu command:", error);
+                        reply("❌ Terjadi kesalahan saat menampilkan menu.");
+                    }
+                break;
                 case 'setprefix':
                     try {
                         if (!isCreator) return reply('⚠️ Hanya pemilik bot yang bisa mengubah prefix!');
                         if (!args[0]) return reply(`❌ Gunakan: ${prefix}setprefix [prefix_baru]`);
 
-                        // ✅ Ubah prefix dalam settings.json
-                        setting.prefix = args[0];
-                        fs.writeFileSync('./Database/settings.json', JSON.stringify(setting, null, '\t'));
-
-                        // ✅ Perbarui variabel prefix yang sedang digunakan
-                        prefix = setting.prefix;
-                        reply(`✅ Prefix berhasil diubah menjadi *${args[0]}*`);
+                        let newPrefix = await setBotPrefix(client, from, args[0]);
+                        if (newPrefix) prefix = newPrefix; // ✅ Perbarui prefix langsung!
                     } catch (error) {
                         console.error("❌ Error saat mengubah prefix:", error); // ✅ Log error di console
                         reply("❌ Terjadi kesalahan saat mengubah prefix. Coba lagi nanti.");
@@ -141,86 +175,125 @@ async function StartBot() {
                     try {
                         if (!isCreator) return reply('⚠️ Hanya pemilik bot yang bisa mengubah mode bot!');
                         if (!args || args.length === 0) return reply(`❌ Gunakan: ${prefix}setmode [public/private]`);
-                        const mode = args[0].toLowerCase();
-                        if (mode !== "public" && mode !== "private") {
-                            return reply(`❌ Pilihan tidak valid! Gunakan: \n• ${prefix}setmode public\n• ${prefix}setmode private`);
-                        }
 
-                        // ✅ Ubah mode dalam settings.json
-                        setting.public = mode === "public";
-                        fs.writeFileSync('./Database/settings.json', JSON.stringify(setting, null, '\t'));
-
-                        // ✅ Perbarui mode bot secara langsung
-                        publicMode = setting.public;
-
-                        reply(`✅ Mode bot berhasil diubah menjadi *${mode.toUpperCase()}*`);
+                        let newMode = await setBotMode(client, from, args[0]);
+                        if (newMode !== null) publicMode = newMode; // ✅ Perbarui mode langsung!
                     } catch (error) {
                         console.error("❌ Error saat mengubah mode:", error);
                         reply("❌ Terjadi kesalahan saat mengubah mode bot. Coba lagi nanti.");
                     }
                 break;
-// ========================= 📌 FITUR PRIBADI ========================= \\
+                case 'setbotname':
+                    try {
+                        if (!isCreator) return reply("⚠️ Hanya pemilik bot yang bisa mengubah nama!");
+                        if (!args.length) return reply("❌ Gunakan: *!setname [nama baru]*");
+
+                        let newBot = await setBotName(client, from, args.join(" "));
+                        if (newBot) botName = newBot; // ✅ Perbarui prefix langsung!
+                    } catch (error) {
+                        console.error("❌ Error saat mengubah nama:", error);
+                        reply("❌ Gagal mengubah nama bot.");
+                    }
+                break;
+                case 'setname':
+                    try {
+                        if (!isCreator) return reply("⚠️ Hanya pemilik bot yang bisa mengubah nama!");
+                        if (!args.length) return reply("❌ Gunakan: *!setname [nama baru]*");
+
+                        await setName(client, args.join(" "));
+                    } catch (error) {
+                        console.error("❌ Error saat mengubah nama:", error);
+                        reply("❌ Gagal mengubah nama bot.");
+                    }
+                break;
                 case 'setpp': 
                     try {
                         if (!isCreator) return reply("⚠️ Hanya pemilik bot yang bisa mengganti foto profil!");
                         if (!info.message.imageMessage) return reply("❌ Kirim gambar dengan caption *!setpp* untuk mengubah foto profil!");
 
-                        const buffer = await downloadContentFromMessage(info.message.imageMessage, "image");
-                        let data = Buffer.from([]);
-                        for await (const chunk of buffer) {
-                            data = Buffer.concat([data, chunk]);
-                        }
-
-                        await client.updateProfilePicture(from, data);
-                        reply("✅ Foto profil berhasil diperbarui!");
+                        await setProfilePicture(client, from, info);
                     } catch (error) {
                         console.error("❌ Error saat mengganti foto profil:", error);
                         reply("❌ Gagal mengubah foto profil.");
                     }
                 break;
-
                 case 'setbio': 
                     try {
                         if (!isCreator) return reply("⚠️ Hanya pemilik bot yang bisa mengubah bio!");
                         if (!args.length) return reply("❌ Gunakan: *!setbio [teks_baru]*");
 
                         const newBio = args.join(" ");
-                        await client.updateProfileStatus(newBio);
-                        reply(`✅ Bio berhasil diperbarui menjadi:\n_${newBio}_`);
+                        await setBio(client, newBio, from);
                     } catch (error) {
                         console.error("❌ Error saat mengganti bio:", error);
                         reply("❌ Gagal mengubah bio.");
                     }
                 break;
-
                 case 'block': 
                     try {
                         if (!isCreator) return reply("⚠️ Hanya pemilik bot yang bisa memblokir nomor!");
                         if (!info.message.extendedTextMessage) return reply("❌ Balas pesan seseorang dengan caption *!block* untuk memblokirnya!");
 
                         const target = info.message.extendedTextMessage.contextInfo.participant;
-                        await client.updateBlockStatus(target, "block");
-                        reply(`✅ @${target.split("@")[0]} telah diblokir.`);
+                        await blockUser(client, from, target);
                     } catch (error) {
                         console.error("❌ Error saat memblokir:", error);
                         reply("❌ Gagal memblokir nomor.");
                     }
                 break;
-
                 case 'unblock': 
                     try {
                         if (!isCreator) return reply("⚠️ Hanya pemilik bot yang bisa membuka blokir!");
                         if (!info.message.extendedTextMessage) return reply("❌ Balas pesan seseorang dengan caption *!unblock* untuk membuka blokir!");
 
                         const target = info.message.extendedTextMessage.contextInfo.participant;
-                        await client.updateBlockStatus(target, "unblock");
-                        reply(`✅ @${target.split("@")[0]} telah dibuka blokirnya.`);
+                        await unblockUser(client, from, target);
                     } catch (error) {
                         console.error("❌ Error saat membuka blokir:", error);
                         reply("❌ Gagal membuka blokir.");
                     }
                 break;
+                case 'getpp':
+                    try {
+                        if (!info.message.extendedTextMessage) return reply("❌ Balas pesan seseorang dengan *!getpp* untuk melihat foto profilnya!");
+
+                        const target = info.message.extendedTextMessage.contextInfo.participant;
+                        await getProfilePicture(client, target);
+                    } catch (error) {
+                        console.error("❌ Error saat mengambil foto profil:", error);
+                        reply("❌ Gagal mengambil foto profil.");
+                    }
+                break;
 // ========================= 📌 FITUR GRUP ========================= \\
+                case 'gmenu':
+                case 'ghelp':
+                    try {
+                        const gMenuText = `📜 *Group Menu - ${botName}*\n
+👥 *Perintah Grup:*
+🔹 *${prefix}kick* - Mengeluarkan anggota (balas pesan)
+🔹 *${prefix}add 628xxx* - Menambahkan anggota ke grup
+🔹 *${prefix}promote* - Menjadikan anggota sebagai admin (balas pesan)
+🔹 *${prefix}demote* - Menurunkan admin menjadi anggota biasa (balas pesan)
+🔹 *${prefix}getadmin* - Melihat daftar admin grup
+
+📢 *Pengumuman Grup:*
+🔹 *${prefix}tagall* - Menandai semua anggota grup
+🔹 *${prefix}hidetag [pesan]* - Mengirim pesan tersembunyi ke semua anggota
+🔹 *${prefix}setdesc [teks]* - Mengubah deskripsi grup
+🔹 *${prefix}setsubject [nama]* - Mengubah nama grup
+
+🗑️ *Administrasi Grup:*
+🔹 *${prefix}delete* - Menghapus pesan bot (balas pesan)`;
+
+        const gMenuImage = "./Media/Foto/menu.jpeg"; // Pastikan gambar tersedia
+        
+        await ImgMessage(gMenuText, gMenuImage);
+    } catch (error) {
+        console.error("❌ Error dalam menu command:", error);
+        reply("❌ Terjadi kesalahan saat menampilkan menu.");
+    }
+break;
+
                 case 'kick': 
                     try {
                         if (!isGroup) return reply("⚠️ Perintah ini hanya bisa digunakan di dalam grup!");
@@ -228,29 +301,24 @@ async function StartBot() {
                         if (!info.message.extendedTextMessage) return reply("❌ Balas pesan seseorang dengan caption *!kick* untuk mengeluarkan!");
 
                         const target = info.message.extendedTextMessage.contextInfo.participant;
-                        await client.groupParticipantsUpdate(from, [target], "remove");
-                        reply(`✅ Berhasil mengeluarkan @${target.split("@")[0]}`);
+                        await kickMember(client, from, target);
                     } catch (error) {
                         console.error("❌ Error saat mengeluarkan anggota:", error);
                         reply("❌ Gagal mengeluarkan anggota.");
                     }
                 break;
-
                 case 'add': 
                     try {
                         if (!isGroup) return reply("⚠️ Perintah ini hanya bisa digunakan di dalam grup!");
                         if (!isCreator) return reply("⚠️ Hanya admin yang bisa menambahkan anggota!");
                         if (!args[0]) return reply("❌ Gunakan: *!add 628xxx*");
 
-                        const number = args[0].replace(/\D/g, "") + "@s.whatsapp.net";
-                        await client.groupParticipantsUpdate(from, [number], "add");
-                        reply(`✅ Berhasil menambahkan @${args[0]}`);
+                        await addMember(client, from, args[0]);
                     } catch (error) {
                         console.error("❌ Error saat menambahkan anggota:", error);
                         reply("❌ Gagal menambahkan anggota.");
                     }
                 break;
-
                 case 'promote': 
                     try {
                         if (!isGroup) return reply("⚠️ Perintah ini hanya bisa digunakan di dalam grup!");
@@ -258,14 +326,12 @@ async function StartBot() {
                         if (!info.message.extendedTextMessage) return reply("❌ Balas pesan seseorang dengan caption *!promote* untuk menjadikannya admin!");
 
                         const target = info.message.extendedTextMessage.contextInfo.participant;
-                        await client.groupParticipantsUpdate(from, [target], "promote");
-                        reply(`✅ @${target.split("@")[0]} telah menjadi admin!`);
+                        await promoteMember(client, from, target);
                     } catch (error) {
                         console.error("❌ Error saat mempromosikan:", error);
                         reply("❌ Gagal mempromosikan anggota.");
                     }
                 break;
-
                 case 'demote': 
                     try {
                         if (!isGroup) return reply("⚠️ Perintah ini hanya bisa digunakan di dalam grup!");
@@ -273,33 +339,102 @@ async function StartBot() {
                         if (!info.message.extendedTextMessage) return reply("❌ Balas pesan seseorang dengan caption *!demote* untuk menurunkannya dari admin!");
 
                         const target = info.message.extendedTextMessage.contextInfo.participant;
-                        await client.groupParticipantsUpdate(from, [target], "demote");
-                        reply(`✅ @${target.split("@")[0]} telah diturunkan dari admin.`);
+                        await demoteMember(client, from, target);
                     } catch (error) {
                         console.error("❌ Error saat menurunkan:", error);
                         reply("❌ Gagal menurunkan admin.");
                     }
                 break;
+                case 'tagall':
+                    try {
+                        if (!isGroup) return reply("⚠️ Perintah ini hanya bisa digunakan di dalam grup!");
+                        if (!isCreator) return reply("⚠️ Hanya admin yang bisa menandai semua anggota!");
 
+                        await tagAll(client, from);
+                    } catch (error) {
+                        console.error("❌ Error saat menandai semua anggota:", error);
+                        reply("❌ Gagal menandai semua anggota.");
+                    }
+                break;
+                case 'hidetag':
+                    try {
+                        if (!isGroup) return reply("⚠️ Perintah ini hanya bisa digunakan di dalam grup!");
+                        if (!isCreator) return reply("⚠️ Hanya admin yang bisa mengirim pesan tersembunyi!");
+
+                        await hideTag(client, from, args.join(" ") || "Pesan tersembunyi!");
+                    } catch (error) {
+                        console.error("❌ Error saat mengirim pesan tersembunyi:", error);
+                        reply("❌ Gagal mengirim pesan tersembunyi.");
+                    }
+                break;
+                case 'setdesc':
+                    try {
+                        if (!isGroup) return reply("⚠️ Perintah ini hanya bisa digunakan di dalam grup!");
+                        if (!isCreator) return reply("⚠️ Hanya admin yang bisa mengubah deskripsi grup!");
+                        if (!args.length) return reply("❌ Gunakan: *!setdesc [deskripsi baru]*");
+
+                        await setDesc(client, from, args.join(" "));
+                    } catch (error) {
+                        console.error("❌ Error saat mengubah deskripsi:", error);
+                        reply("❌ Gagal mengubah deskripsi grup.");
+                    }
+                break;
+                case 'setsubject':
+                    try {
+                        if (!isGroup) return reply("⚠️ Perintah ini hanya bisa digunakan di dalam grup!");
+                        if (!isCreator) return reply("⚠️ Hanya admin yang bisa mengubah nama grup!");
+                        if (!args.length) return reply("❌ Gunakan: *!setsubject [nama baru]*");
+
+                        await setSubject(client, from, args.join(" "));
+                    } catch (error) {
+                        console.error("❌ Error saat mengubah nama grup:", error);
+                        reply("❌ Gagal mengubah nama grup.");
+                    }
+                break;
+                case 'delete':
+                    try {
+                        if (!info.message.extendedTextMessage || !info.message.extendedTextMessage.contextInfo) {
+                            return reply("❌ Balas pesan bot dengan *!delete* untuk menghapusnya!");
+                        }
+
+                        const targetMessage = info.message.extendedTextMessage.contextInfo;
+        
+                        // Pastikan hanya menghapus pesan bot sendiri
+                        if (!targetMessage.stanzaId || !targetMessage.participant) {
+                            return reply("❌ Pesan tidak bisa dihapus!");
+                        }
+
+                        await deleteMessage(client, from, targetMessage);
+                    } catch (error) {
+                        console.error("❌ Error saat menghapus pesan:", error);
+                        reply("❌ Gagal menghapus pesan.");
+                    }
+                break;
+                case 'getadmin':
+                    try {
+                        if (!isGroup) return reply("⚠️ Perintah ini hanya bisa digunakan di dalam grup!");
+
+                        const groupMetadata = await client.groupMetadata(from);
+                        const admins = getGroupAdmins(groupMetadata.participants);
+                        const adminList = admins.map(admin => `👑 @${admin.split("@")[0]}`).join("\n");
+
+                        reply(`📜 *Daftar Admin Grup:*\n${adminList}`);
+                    } catch (error) {
+                        console.error("❌ Error saat mengambil daftar admin:", error);
+                        reply("❌ Gagal mengambil daftar admin.");
+                    }
+                break;
+// ========================= 📌 FITUR PUBLIC ========================= \\
                 case 'menu':
                 case 'help':
                     try {
-                        const MenuText = `📜 *Menu Bot - SelfBot by Jawa*\n
-🔹 *${prefix}menu* - Menampilkan daftar perintah
-🔹 *${prefix}setpp* - Mengubah foto profil bot (balas dengan gambar)
-🔹 *${prefix}setbio [teks]* - Mengubah bio bot
-
-📌 *Perintah Grup:*
-🔹 *${prefix}kick* - Mengeluarkan anggota (balas pesan)
-🔹 *${prefix}add 628xxx* - Menambahkan anggota ke grup
-🔹 *${prefix}promote* - Menjadikan anggota sebagai admin (balas pesan)
-🔹 *${prefix}demote* - Menurunkan admin menjadi anggota biasa (balas pesan)
-
-🔐 *Perintah Blokir:*
-🔹 *${prefix}block* - Memblokir nomor WhatsApp (balas pesan)
-🔹 *${prefix}unblock* - Membuka blokir nomor WhatsApp (balas pesan)
+                        const MenuText = `📜 *Menu Bot - ${botName}*\n
+📝 *${prefix}pmenu* - Menampilkan daftar perintah pribadi
+👥 *${prefix}gmenu* - Menampilkan daftar perintah grup
 
 🛠️ *Perintah Lainnya:*
+🔹 *${prefix}sticker* - Membuat sticker
+🔹 *${prefix}toimg* - Mengubah sticker menjadi Foto
 🔹 *${prefix}ping* - Mengecek respons bot
 🔹 *${prefix}source* - Menampilkan source code bot`;
                         const MenuImage = "./Media/Foto/menu.jpeg";
@@ -310,16 +445,61 @@ async function StartBot() {
                         reply("❌ Terjadi kesalahan saat menampilkan menu.");
                     }
                 break;
+                case 'sticker':
+                    try {
+                        if (!info.message.imageMessage && !info.message.videoMessage) 
+                        return reply("❌ Kirim gambar atau video dengan caption *!sticker*");
+
+                        const media = await getMediaBuffer(info.message);
+                        if (!media) return reply("❌ Gagal mengunduh media.");
+
+                        await makeSticker(client, from, media);
+
+                    } catch (error) {
+                        console.error("❌ Error saat membuat stiker:", error);
+                        reply("❌ Terjadi kesalahan saat membuat stiker.");
+                    }
+                break;
+                case 'toimg':
+                    try {
+                        if (!info.message.extendedTextMessage || !info.message.extendedTextMessage.contextInfo.quotedMessage) {
+                            return reply("❌ Balas pesan stiker dengan *!toimg* untuk mengubahnya menjadi gambar!");
+                        }
+
+                        // Ambil pesan yang dibalas (quoted)
+                        const quotedMsg = info.message.extendedTextMessage.contextInfo.quotedMessage;
+
+                        // Periksa apakah pesan yang dibalas adalah stiker
+                        if (!quotedMsg.stickerMessage) {
+                            return reply("❌ Pesan yang dibalas bukan stiker! Gunakan perintah ini hanya untuk stiker.");
+                        }
+
+                        // Unduh media dari pesan yang dibalas
+                        const buffer = await getMediaBuffer(quotedMsg);
+
+                        if (!buffer) {
+                            return reply("❌ Gagal mengunduh stiker. Coba lagi.");
+                        }
+
+                        // Konversi stiker ke gambar
+                        await stickerToImage(client, from, buffer);
+
+                    } catch (error) {
+                        console.error("❌ Error saat mengubah stiker ke gambar:", error);
+                        reply("❌ Terjadi kesalahan saat mengubah stiker ke gambar.");
+                    }
+                break;
                 case 'ping':
                     try {
                         const start = Date.now();
-                        const pong = await reply("🏓 *Pinging...*");
+                        await reply("🏓 *Pinging...*");
                         const end = Date.now();
                         const pingTime = end - start;
-                        reply(`🏓 Pong!\n⏳ *Speed*: ${pingTime} ms`);
+                        await sleep(1000); // 🔹 Tunggu 1 detik sebelum mengirim "Pong!"
+                        await reply(`🏓 Pong!\n⏳ *Speed*: ${pingTime} ms`);
                     } catch (error) {
                         console.error("❌ Error dalam command ping:", error);
-                        reply("❌ Terjadi kesalahan saat mengecek ping.");
+                        await reply("❌ Terjadi kesalahan saat mengecek ping.");
                     }
                 break;
                 case 'source':
@@ -331,11 +511,9 @@ async function StartBot() {
                         reply("❌ Terjadi kesalahan saat menampilkan source.");
                     }
                 break;
-
-
                 default:
-                    if (isCmd) reply(`⚠️ Perintah *${command}* tidak ditemukan.`);
-                    break;
+                if (isCmd) reply(`⚠️ Perintah *${command}* tidak ditemukan.`);
+                break;
             }
         } catch (error) {
             console.error("❌ Error di command:", error);
